@@ -8,6 +8,7 @@ const knownPeople = {
   pooarasu: { name: "Pooarasu", image: "pooarasu.jpg" },
   madesh: { name: "Madesh", image: "madesh.jpg" },
   gokul: { name: "Gokul", image: "gokul.jpg" },
+  arun: { name: "Arun", image: "arun.jpg" },
 };
 
 const videoConstraints = {
