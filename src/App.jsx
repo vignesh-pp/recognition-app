@@ -1,15 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import Webcam from "react-webcam";
 import * as faceapi from "face-api.js";
+import "./App.css";
 
-const expressionEmoji = {
-  happy: "😄",
-  sad: "😢",
-  angry: "😠",
-  surprised: "😲",
-  neutral: "😐",
-  fearful: "😨",
-  disgusted: "🤢",
+const knownPeople = {
+  vignesh: { name: "Vignesh", image: "vignesh.jpg" },
+  pooarasu: { name: "Pooarasu", image: "pooarasu.jpg" },
+  madesh: { name: "Madesh", image: "madesh.jpg" },
+  gokul: { name: "Gokul", image: "gokul.jpg" },
 };
 
 const videoConstraints = {
@@ -22,8 +20,12 @@ export default function App() {
   const webcamRef = useRef(null);
   const canvasRef = useRef(null);
   const [expression, setExpression] = useState("");
-  const [person, setPerson] = useState("");
+  const [identity, setIdentity] = useState(null);
   const [modelsLoaded, setModelsLoaded] = useState(false);
+  const [modelError, setModelError] = useState(false);
+  const [cameraError, setCameraError] = useState(false);
+  const [faceDetected, setFaceDetected] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState("");
   const labeledFaceDescriptorsRef = useRef([]);
 
   useEffect(() => {
@@ -48,16 +50,17 @@ export default function App() {
         setModelsLoaded(true);
       } catch (error) {
         console.error("Model load error:", error);
+        setModelError(true);
       }
     };
     loadModels();
   }, []);
 
   const loadLabeledImages = async () => {
-    const labels = ["vignesh"]; // add more names here
+    const labels = Object.entries(knownPeople);
     return Promise.all(
-      labels.map(async (label) => {
-        const img = await faceapi.fetchImage(`/known/${label}.jpg`);
+      labels.map(async ([label, profile]) => {
+        const img = await faceapi.fetchImage(`/known/${profile.image}`);
         const detections = await faceapi
           .detectSingleFace(img)
           .withFaceLandmarks()
@@ -95,6 +98,7 @@ export default function App() {
       canvas.getContext("2d").clearRect(0, 0, canvas.width, canvas.height);
 
       if (detection) {
+        setFaceDetected(true);
         const resized = faceapi.resizeResults(detection, displaySize);
         faceapi.draw.drawDetections(canvas, resized);
         faceapi.draw.drawFaceExpressions(canvas, resized);
@@ -104,83 +108,145 @@ export default function App() {
         )[0];
         setExpression(topExpression);
 
-        const faceMatcher = new faceapi.FaceMatcher(
-          labeledFaceDescriptorsRef.current,
-          0.6
+        if (labeledFaceDescriptorsRef.current.length) {
+          const faceMatcher = new faceapi.FaceMatcher(
+            labeledFaceDescriptorsRef.current,
+            0.6
+          );
+          const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
+          setIdentity({
+            label: bestMatch.label,
+            distance: bestMatch.distance,
+          });
+        }
+        setLastUpdated(
+          new Date().toLocaleTimeString([], {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+          })
         );
-        const bestMatch = faceMatcher.findBestMatch(detection.descriptor);
-        setPerson(bestMatch.toString());
       } else {
         setExpression("");
-        setPerson("");
+        setIdentity(null);
+        setFaceDetected(false);
       }
     }
   };
 
+  const systemState = modelError || cameraError ? "error" : modelsLoaded ? "ready" : "loading";
+  const systemLabel = cameraError
+    ? "Camera unavailable"
+    : modelError
+    ? "Models unavailable"
+    : modelsLoaded
+      ? "Analysis ready"
+      : "Loading models";
+  const isKnownPerson = identity && identity.label !== "unknown";
+  const identityName = isKnownPerson
+    ? knownPeople[identity.label]?.name || identity.label
+    : identity
+      ? "Unknown person"
+      : "Awaiting face";
+  const matchConfidence = isKnownPerson
+    ? `${Math.round((1 - identity.distance) * 100)}% match`
+    : identity
+      ? "No enrolled match"
+      : "No reading yet";
+
   return (
-    <div className="container py-4">
-      <div className="card shadow-lg">
-        <div className="card-header bg-primary text-white text-center">
-          <h3 className="mb-0">🎓 Emotion Recognition System</h3>
-        </div>
-        <div className="card-body">
-          <div className="d-flex justify-content-center position-relative">
+    <main className="app-shell">
+      <section className="workspace">
+        <header className="topbar">
+          <div>
+            <p className="eyebrow">Vision analysis</p>
+            <h1>Emotion recognition</h1>
+          </div>
+          <div className={`system-status ${systemState}`}>
+            <span className="status-dot" />
+            {systemLabel}
+          </div>
+        </header>
+
+        <div className="analysis-grid">
+          <section className="camera-panel" aria-label="Live camera feed">
+            <div className="panel-heading">
+              <p className="panel-label">Camera input</p>
+              <span className="live-label">LIVE</span>
+            </div>
+            <div className="camera-frame">
             <Webcam
               ref={webcamRef}
               audio={false}
               videoConstraints={videoConstraints}
-              className="border rounded shadow-sm"
-              style={{ width: "100%", maxWidth: 640 }}
+              className="camera-feed"
+              onUserMedia={() => setCameraError(false)}
+              onUserMediaError={() => setCameraError(true)}
             />
             <canvas
               ref={canvasRef}
               width={videoConstraints.width}
               height={videoConstraints.height}
-              style={{
-                position: "absolute",
-                top: 0,
-                left: "50%",
-                transform: "translateX(-50%)",
-                zIndex: 2,
-              }}
+              className="detection-layer"
             />
-          </div>
+            </div>
+            <div className="camera-caption">
+              <span>{cameraError ? "Allow camera access to start analysis" : "Face landmark and expression tracking"}</span>
+              <strong>{faceDetected ? "Face found" : modelsLoaded ? "Searching" : "Standby"}</strong>
+            </div>
+          </section>
 
-          <div className="text-center mt-4">
-            <h1 style={{ fontSize: "4rem" }}>
-              {expression ? expressionEmoji[expression] || "🤔" : "🕵️‍♂️"}
-            </h1>
-            <h5>
-              {expression ? (
-                <span className="badge bg-success px-3 py-2">
-                  Detected Emotion: {expression}
-                </span>
-              ) : (
-                <span className="badge bg-secondary px-3 py-2">
-                  Scanning for emotion...
-                </span>
-              )}
-            </h5>
-            {/* <h5 className="mt-3">
-              {person ? (
-                <span className="badge bg-info text-dark px-3 py-2">
-                  Recognized: {person}
-                </span>
-              ) : (
-                <span className="badge bg-warning text-dark px-3 py-2">
-                  Identifying face...
-                </span>
-              )}
-            </h5>
-            <div className="text-muted mt-3">
-              Last update: {new Date().toLocaleTimeString()}
+          <aside className="insights-panel" aria-live="polite">
+            <p className="panel-label">Current reading</p>
+            <div className="emotion-display">
+              <p className="detail-label">Dominant expression</p>
+              <p className={`emotion-value ${expression ? "" : "waiting"}`}>
+                {expression || "Scanning frame"}
+              </p>
+              <p className="emotion-copy">
+                {expression
+                  ? "The strongest expression detected in the current frame."
+                  : "Position one face inside the camera frame to begin analysis."}
+              </p>
+            </div>
+            <div className="readings">
+              <div className="reading">
+                <div><p className="detail-label">Who is this?</p></div>
+                <p className={`detail-value ${isKnownPerson ? "" : "unknown"}`}>
+                  {identityName}
+                </p>
+              </div>
+              <div className="reading">
+                <div><p className="detail-label">Match confidence</p></div>
+                <p className={`detail-value ${isKnownPerson ? "" : "unknown"}`}>
+                  {matchConfidence}
+                </p>
+              </div>
+              <div className="reading">
+                <div><p className="detail-label">Last analysis</p></div>
+                <p className={`detail-value ${lastUpdated ? "" : "unknown"}`}>
+                  {lastUpdated || "No reading yet"}
+                </p>
+              </div>
+            </div>
+            {/* <div className="enrolled-people">
+              <p className="detail-label">Enrolled people</p>
+              <div className="profile-list">
+                {Object.values(knownPeople).map((profile) => (
+                  <span className="profile-name" key={profile.name}>{profile.name}</span>
+                ))}
+              </div>
             </div> */}
-          </div>
+            <p className={`notice ${modelError || cameraError ? "error" : ""}`}>
+              {cameraError
+                ? "Camera access is required for live analysis. Check your browser permission, then reload this page."
+                : modelError
+                ? "The analysis models could not be loaded. Refresh the page and check that the local model files are available."
+                : "Analysis runs locally in your browser. Camera frames are not sent to a server."}
+            </p>
+          </aside>
         </div>
-        <div className="card-footer text-center text-muted small">
-          Powered by face-api.js | Built with ❤️ by Vignesh
-        </div>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
